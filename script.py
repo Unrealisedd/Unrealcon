@@ -171,14 +171,13 @@ class XssRecon:
         print(f"{self.YELLOW}3: Enumerate and filter domains{Style.RESET_ALL}")
         print(f"{self.YELLOW}4: Crawl and filter URLs{Style.RESET_ALL}")
         print(f"{self.YELLOW}5: Filtering all{Style.RESET_ALL}")
-        print(
-            f"{self.YELLOW}6: Create new separated file for parameter testing{Style.RESET_ALL}"
-        )
-        print(
-            f"{self.YELLOW}7: Getting ready for XSS & URLs with query strings{Style.RESET_ALL}"
-        )
+        print(f"{self.YELLOW}6: Create new separated file for parameter testing{Style.RESET_ALL}")
+        print(f"{self.YELLOW}7: Getting ready for XSS & URLs with query strings{Style.RESET_ALL}")
         print(f"{self.YELLOW}8: unrealcon RUN{Style.RESET_ALL}")
-        print(f"{self.YELLOW}9: Exit{Style.RESET_ALL}")
+        print(f"{self.YELLOW}9: URL dedupe{Style.RESET_ALL}")
+        print(f"{self.YELLOW}10: Exit{Style.RESET_ALL}")
+        print(f"{self.YELLOW}I would advice doing 9 before 8 btw, saves you some time :){Style.RESET_ALL}")
+        
 
     def run(self):
         while True:
@@ -186,13 +185,7 @@ class XssRecon:
             self.display_menu()
             
             try:
-                choice = int(input("Enter your choice [1-9]: "))
-                
-                # Check if the selected option is in the correct order
-                if choice >= 2 and choice <= 8 and choice != 4:
-                    if choice > self.last_completed_option + 1:
-                        print(f"{self.RED}Please respect order one by one from 1-8, you can't skip previous Options{Style.RESET_ALL}")
-                        continue
+                choice = int(input("Enter your choice [1-10]: "))
 
                 if choice == 1:
                     self.install_tools()
@@ -231,13 +224,19 @@ class XssRecon:
                     else:
                         self.run_xss()
                 elif choice == 9:
+                    if not self.domain_name:
+                        print("Domain name not set. Please select option 2 to set the domain name.")
+                    else:
+                        self.dedupe_urls()
+                elif choice == 10:
                     print("Exiting...")
                     break
                 else:
                     print(f"{self.RED}Invalid option{Style.RESET_ALL}")
-            
+                
             except ValueError:
                 print(f"{self.RED}Please enter a valid number{Style.RESET_ALL}")
+
 
 
     def enumerate_domains(self):
@@ -248,10 +247,6 @@ class XssRecon:
         print(f"{self.BOLD_WHITE}Enumerating domains for {self.domain_name}{Style.RESET_ALL}")
         
         os.makedirs("recon_output", exist_ok=True)
-        merged_file = os.path.join("recon_output", f"{self.domain_name}-domains.txt")
-        if not os.path.exists(merged_file):
-            with open(merged_file, "w") as f:
-                f.write(f"{self.domain_name}\n")
 
         def run_subfinder():
             output_file = os.path.join("recon_output", "subfinder_output.txt")
@@ -260,43 +255,34 @@ class XssRecon:
             return output_file
 
         print(f"{self.BOLD_BLUE}Starting passive enumeration with Subfinder...⌛️{Style.RESET_ALL}")
-        
-        try:
-            output_file = run_subfinder()
-            print(f"{self.GREEN}Subfinder completed, output saved to {output_file}{Style.RESET_ALL}")
-        except Exception as e:
-            print(f"{self.RED}Subfinder failed: {str(e)}{Style.RESET_ALL}")
+        tool_output = run_subfinder()
 
-        # Merge results and remove duplicates
+        # Process results
+        merged_file = os.path.join("recon_output", f"{self.domain_name}-domains.txt")
+        if os.path.exists(tool_output):
+            shutil.copy2(tool_output, merged_file)
+
+        # Remove duplicates
         domains = set()
-        file_path = os.path.join("recon_output", "subfinder_output.txt")
-        if os.path.exists(file_path):
-            with open(file_path) as f:
-                domains.update(line.strip().lower() for line in f if line.strip())
+        with open(merged_file) as f:
+            domains = {line.strip().lower() for line in f if line.strip()}
 
-        # Write unique domains
+        # Write unique domains back
         with open(merged_file, "w") as f:
             for domain in sorted(domains):
                 f.write(f"{domain}\n")
 
         print(f"{self.BOLD_BLUE}Found {len(domains)} unique domains{Style.RESET_ALL}")
 
-        # Domain validation part
         def check_domain(domain):
             try:
-                # Reduced timeout from 5 to 3 seconds for faster checks
-                response = requests.get(f"http://{domain}", timeout=3, allow_redirects=False)
+                response = requests.get(f"http://{domain}", timeout=5)
                 return domain if response.status_code in [200, 301, 302, 307, 308, 403] else None
             except:
-                try:
-                    # Try HTTPS if HTTP fails
-                    response = requests.get(f"https://{domain}", timeout=3, allow_redirects=False)
-                    return domain if response.status_code in [200, 301, 302, 307, 308, 403] else None
-                except:
-                    return None
-
+                return None
 
         print(f"{self.BOLD_BLUE}Verifying domain availability...⌛️{Style.RESET_ALL}")
+
         alive_domains = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             futures = [executor.submit(check_domain, domain) for domain in domains]
@@ -312,9 +298,8 @@ class XssRecon:
 
         print(f"{self.GREEN}Found {len(alive_domains)} alive domains{Style.RESET_ALL}")
         print(f"{self.BOLD_BLUE}Results saved to {alive_file}{Style.RESET_ALL}")
-        
-        self.last_completed_option = 3
 
+        self.last_completed_option = 3
 
 
 
@@ -763,6 +748,123 @@ class XssRecon:
         print(f"{self.BOLD_BLUE}Results saved to {output_file}{Style.RESET_ALL}")
 
         self.last_completed_option = 8
+
+    def dedupe_urls(self):
+        if not self.domain_name:
+            print(f"{self.RED}Domain name not set. Please use option 2 first.{Style.RESET_ALL}")
+            return
+
+        print(f"{self.BOLD_WHITE}Select file to deduplicate:{Style.RESET_ALL}")
+        print("1. XSS Candidates")
+        print("2. Parameters file")
+        
+        try:
+            choice = int(input("Enter your choice [1-2]: "))
+            if choice == 1:
+                input_file = os.path.join("recon_output", f"{self.domain_name}-xss-candidates.txt")
+                output_suffix = "deduped-xss-candidates.txt"
+            elif choice == 2:
+                input_file = os.path.join("recon_output", f"{self.domain_name}-parameters.txt")
+                output_suffix = "deduped-parameters.txt"
+            else:
+                print(f"{self.RED}Invalid choice{Style.RESET_ALL}")
+                return
+        except ValueError:
+            print(f"{self.RED}Please enter a valid number{Style.RESET_ALL}")
+            return
+
+        if not os.path.exists(input_file):
+            print(f"{self.RED}Input file not found. Please run previous steps first.{Style.RESET_ALL}")
+            return
+
+        print(f"{self.BOLD_WHITE}Performing advanced URL deduplication for {self.domain_name}{Style.RESET_ALL}")
+
+        def parse_url_components(url):
+            parsed = urllib.parse.urlparse(url)
+            path = parsed.path.rstrip('/')
+            params = urllib.parse.parse_qs(parsed.query)
+            return path, params
+
+        def get_pattern_signature(url):
+            parsed = urllib.parse.urlparse(url)
+            path_parts = parsed.path.split('/')
+            
+            # Replace sequences of numbers or letters with placeholders
+            pattern_parts = []
+            for part in path_parts:
+                # Handle product IDs (like WA200002506)
+                part = re.sub(r'[A-Z]{2}\d{9}', '{PRODUCT_ID}', part)
+                # Handle any alphanumeric sequences
+                part = re.sub(r'[A-Za-z0-9]{6,}', '{ID}', part)
+                # Handle numeric sequences
+                part = re.sub(r'\d+', '{NUM}', part)
+                pattern_parts.append(part)
+            
+            pattern_path = '/'.join(pattern_parts)
+            
+            # Create pattern for query parameters
+            query_params = sorted(urllib.parse.parse_qs(parsed.query).keys())
+            
+            return f"{parsed.netloc}{pattern_path}", tuple(query_params)
+
+        def is_more_feature_rich(url1_params, url2_params):
+            return all(param in url1_params for param in url2_params)
+
+        url_groups = {}
+        pattern_groups = {}
+        
+        with open(input_file) as f:
+            urls = [line.strip() for line in f if line.strip()]
+
+        print(f"{self.BOLD_BLUE}Processing {len(urls)} URLs...⌛️{Style.RESET_ALL}")
+
+        # First group by patterns
+        for url in urls:
+            pattern_sig, params = get_pattern_signature(url)
+            if pattern_sig not in pattern_groups:
+                pattern_groups[pattern_sig] = []
+            pattern_groups[pattern_sig].append(url)
+
+        # Then process each pattern group
+        deduped_urls = []
+        for pattern, pattern_urls in pattern_groups.items():
+            # If there's only one URL in the pattern group, keep it
+            if len(pattern_urls) == 1:
+                deduped_urls.extend(pattern_urls)
+                continue
+                
+            # Group by path for parameter comparison
+            path_groups = {}
+            for url in pattern_urls:
+                path, params = parse_url_components(url)
+                if path not in path_groups:
+                    path_groups[path] = []
+                path_groups[path].append((url, params))
+            
+            # Select best URL from each path group
+            for path_urls in path_groups.values():
+                best_url = path_urls[0][0]
+                best_params = path_urls[0][1]
+                
+                for url, params in path_urls[1:]:
+                    if len(params) > len(best_params) or (len(params) == len(best_params) and len(url) < len(best_url)):
+                        if is_more_feature_rich(params, best_params):
+                            best_url = url
+                            best_params = params
+                
+                deduped_urls.append(best_url)
+
+        output_file = os.path.join("recon_output", f"{self.domain_name}-{output_suffix}")
+        with open(output_file, 'w') as f:
+            for url in sorted(set(deduped_urls)):
+                f.write(f"{url}\n")
+
+        print(f"{self.GREEN}Deduplication complete:{Style.RESET_ALL}")
+        print(f"{self.BOLD_WHITE}Original URLs: {len(urls)}{Style.RESET_ALL}")
+        print(f"{self.BOLD_WHITE}Deduplicated URLs: {len(deduped_urls)}{Style.RESET_ALL}")
+        print(f"{self.BOLD_BLUE}Results saved to {output_file}{Style.RESET_ALL}")
+
+        self.last_completed_option = 9
 
 
 
